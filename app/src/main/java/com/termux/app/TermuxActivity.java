@@ -25,11 +25,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Vibrator;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v4.view.PagerAdapter;
-import android.support.v4.view.ViewPager;
-import android.support.v4.widget.DrawerLayout;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
@@ -70,6 +65,12 @@ import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.viewpager.widget.PagerAdapter;
+import androidx.viewpager.widget.ViewPager;
+
 /**
  * A terminal emulator activity.
  * <p/>
@@ -89,6 +90,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     private static final int CONTEXTMENU_RESET_TERMINAL_ID = 5;
     private static final int CONTEXTMENU_STYLING_ID = 6;
     private static final int CONTEXTMENU_HELP_ID = 8;
+    private static final int CONTEXTMENU_TOGGLE_KEEP_SCREEN_ON = 9;
 
     private static final int MAX_SESSIONS = 8;
 
@@ -141,6 +143,10 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 }
                 checkForFontAndColors();
                 mSettings.reloadFromProperties(TermuxActivity.this);
+
+                if (mExtraKeysView != null) {
+                    mExtraKeysView.reload(mSettings.mExtraKeys, ExtraKeysView.defaultCharDisplay);
+                }
             }
         }
     };
@@ -205,10 +211,11 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         mTerminalView.setOnKeyListener(new TermuxViewClient(this));
 
         mTerminalView.setTextSize(mSettings.getFontSize());
+        mTerminalView.setKeepScreenOn(mSettings.isScreenAlwaysOn());
         mTerminalView.requestFocus();
 
         final ViewPager viewPager = findViewById(R.id.viewpager);
-        if (mSettings.isShowExtraKeys()) viewPager.setVisibility(View.VISIBLE);
+        if (mSettings.mShowExtraKeys) viewPager.setVisibility(View.VISIBLE);
         
         
         ViewGroup.LayoutParams layoutParams = viewPager.getLayoutParams();
@@ -242,7 +249,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                         if (session != null) {
                             if (session.isRunning()) {
                                 String textToSend = editText.getText().toString();
-                                if (textToSend.length() == 0) textToSend = "\n";
+                                if (textToSend.length() == 0) textToSend = "\r";
                                 session.write(textToSend);
                             } else {
                                 removeFinishedSession(session);
@@ -458,6 +465,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 TermuxInstaller.setupIfNeeded(TermuxActivity.this, () -> {
                     if (mTermService == null) return; // Activity might have been destroyed.
                     try {
+                        clearTemporaryDirectory();
                         addNewSession(false, null);
                     } catch (WindowManager.BadTokenException e) {
                         // Activity finished - ignore.
@@ -471,6 +479,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             Intent i = getIntent();
             if (i != null && Intent.ACTION_RUN.equals(i.getAction())) {
                 // Android 7.1 app shortcut from res/xml/shortcuts.xml.
+                clearTemporaryDirectory();
                 addNewSession(false, null);
             } else {
                 switchToSession(getStoredCurrentSessionOrLast());
@@ -565,18 +574,6 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             new AlertDialog.Builder(this).setTitle(R.string.max_terminals_reached_title).setMessage(R.string.max_terminals_reached_message)
                 .setPositiveButton(android.R.string.ok, null).show();
         } else {
-            if (mTermService.getSessions().size() == 0 && !mTermService.isWakelockEnabled()) {
-                File termuxTmpDir = new File(TermuxService.PREFIX_PATH + "/tmp");
-                if (termuxTmpDir.exists()) {
-                    try {
-                        TermuxInstaller.deleteFolder(termuxTmpDir);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-
-                    termuxTmpDir.mkdirs();
-                }
-            }
             String executablePath = (failSafe ? "/system/bin/sh" : null);
             TerminalSession newSession = mTermService.createTermSession(executablePath, null, null, failSafe);
             if (sessionName != null) {
@@ -631,6 +628,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         menu.add(Menu.NONE, CONTEXTMENU_RESET_TERMINAL_ID, Menu.NONE, R.string.reset_terminal);
         menu.add(Menu.NONE, CONTEXTMENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.kill_process, getCurrentTermSession().getPid())).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXTMENU_STYLING_ID, Menu.NONE, R.string.style_terminal);
+        menu.add(Menu.NONE, CONTEXTMENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.toggle_keep_screen_on).setCheckable(true).setChecked(mSettings.isScreenAlwaysOn());
         menu.add(Menu.NONE, CONTEXTMENU_HELP_ID, Menu.NONE, R.string.help);
     }
 
@@ -645,7 +643,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         // Pattern for recognizing a URL, based off RFC 3986
         // http://stackoverflow.com/questions/5713558/detect-and-extract-url-from-a-string
         final Pattern urlPattern = Pattern.compile(
-            "(?:^|[\\W])((ht|f)tp(s?)://|www\\.)" + "(([\\w\\-]+\\.)+?([\\w\\-.~]+/?)*" + "[\\p{Alnum}.,%_=?&#\\-+()\\[\\]\\*$~@!:/{};']*)",
+            "(?:^|[\\W])((ht|f)tp(s?)://|www\\.)" + "(([\\w\\-]+\\.)+?([\\w\\-.~]+/?)*" + "[\\p{Alnum}.,%_=?&#\\-+()\\[\\]*$~@!:/{};']*)",
             Pattern.CASE_INSENSITIVE | Pattern.MULTILINE | Pattern.DOTALL);
         LinkedHashSet<CharSequence> urlSet = new LinkedHashSet<>();
         Matcher matcher = urlPattern.matcher(text);
@@ -666,7 +664,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             return;
         }
 
-        final CharSequence[] urls = urlSet.toArray(new CharSequence[urlSet.size()]);
+        final CharSequence[] urls = urlSet.toArray(new CharSequence[0]);
         Collections.reverse(Arrays.asList(urls)); // Latest first.
 
         // Click to copy url to clipboard:
@@ -751,6 +749,16 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             case CONTEXTMENU_HELP_ID:
                 startActivity(new Intent(this, TermuxHelpActivity.class));
                 return true;
+            case CONTEXTMENU_TOGGLE_KEEP_SCREEN_ON: {
+                if(mTerminalView.getKeepScreenOn()) {
+                    mTerminalView.setKeepScreenOn(false);
+                    mSettings.setScreenAlwaysOn(this, false);
+                } else {
+                    mTerminalView.setKeepScreenOn(true);
+                    mSettings.setScreenAlwaysOn(this, true);
+                }
+                return true;
+            }
             default:
                 return super.onContextItemSelected(item);
         }
@@ -810,4 +818,18 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         }
     }
 
+    private void clearTemporaryDirectory() {
+        if (mTermService.getSessions().size() == 0 && !mTermService.isWakelockEnabled()) {
+            File termuxTmpDir = new File(TermuxService.PREFIX_PATH + "/tmp");
+            if (termuxTmpDir.exists()) {
+                try {
+                    TermuxInstaller.deleteFolder(termuxTmpDir);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                termuxTmpDir.mkdirs();
+            }
+        }
+    }
 }

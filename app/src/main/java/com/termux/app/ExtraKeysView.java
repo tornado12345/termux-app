@@ -84,7 +84,7 @@ public final class ExtraKeysView extends GridLayout {
         } else {
             // not a control char
             TerminalSession session = terminalView.getCurrentSession();
-            if (session != null)
+            if (session != null && keyName.length() > 0)
                 session.write(keyName);
         }
     }
@@ -107,16 +107,6 @@ public final class ExtraKeysView extends GridLayout {
     private ScheduledExecutorService scheduledExecutor;
     private PopupWindow popupWindow;
     private int longPressCount;
-    
-    /** @deprecated call readSpecialButton(SpecialButton.CTRL); */
-    public boolean readControlButton() {
-        return readSpecialButton(SpecialButton.CTRL);
-    }
-    
-    /** @deprecated call readSpecialButton(SpecialButton.ALT); */
-    public boolean readAltButton() {
-        return readSpecialButton(SpecialButton.ALT);
-    }
     
     public boolean readSpecialButton(SpecialButton name) {
         SpecialButtonState state = specialButtons.get(name);

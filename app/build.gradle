@@ -4,8 +4,9 @@ android {
     compileSdkVersion 28
 
     dependencies {
-        implementation "com.android.support:support-annotations:28.0.0"
-        implementation "com.android.support:support-core-ui:28.0.0"
+        implementation "androidx.annotation:annotation:1.0.1"
+        implementation "androidx.viewpager:viewpager:1.0.0"
+        implementation "androidx.drawerlayout:drawerlayout:1.0.0"
         implementation project(":terminal-view")
     }
 
@@ -13,8 +14,8 @@ android {
         applicationId "com.termux"
         minSdkVersion 21
         targetSdkVersion 28
-        versionCode 65
-        versionName "0.65"
+        versionCode 66
+        versionName "0.66"
     }
 
     buildTypes {
